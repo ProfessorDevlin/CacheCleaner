@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          # Tag "v1.2.3" -> version 1.2.3, otherwise a development version
+          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME.Substring(1) } else { '0.0.0-dev' }
+          "value=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build
+        run: dotnet build "Cache Cleaner.sln" -c Release -p:Version=${{ steps.version.outputs.value }}
+
+      - name: Installer and portable
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVersion=${{ steps.version.outputs.value }}" installer\setup.iss
+          Copy-Item "bin\Release\net48\Cache Cleaner.exe" "installer\Output\CacheCleaner-${{ steps.version.outputs.value }}-portable.exe"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CacheCleaner
+          path: installer/Output/*.exe
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: installer/Output/*.exe
+          generate_release_notes: true
